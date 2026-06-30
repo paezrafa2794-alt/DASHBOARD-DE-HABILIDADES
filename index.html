@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Constelación del Conocimiento · Skill-Tree Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root{
+    --bg:#05050a;
+    --cyan:#39e8ff;
+    --gold:#ffc857;
+    --violet:#a06bff;
+    --locked:#3a3d4a;
+    --panel-bg:rgba(10,12,22,0.92);
+    --border:#2a2e45;
+    font-family:'Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;padding:0;width:100%;height:100%;
+    background:var(--bg);
+    overflow:hidden;
+    color:#dfe4ff;
+    font-family: 'Consolas','Courier New',monospace;
+  }
+  canvas#stars{position:fixed;inset:0;z-index:0;}
+
+  #viewport{
+    position:fixed;inset:0;
+    z-index:1;
+    cursor:grab;
+    overflow:hidden;
+  }
+  #viewport.dragging{cursor:grabbing;}
+
+  #world{
+    position:absolute;
+    left:50%; top:50%;
+    transform-origin:0 0;
+    width:0;height:0;
+  }
+  #lines{
+    position:absolute;
+    left:-6000px; top:-6000px;
+    width:12000px;height:12000px;
+    pointer-events:none;
+  }
+  #nodesLayer{
+    position:absolute;
+    left:-6000px; top:-6000px;
+    width:12000px;height:12000px;
+  }
+
+  .node{
+    position:absolute;
+    width:96px;height:96px;
+    margin-left:-48px;margin-top:-48px;
+    border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    text-align:center;
+    font-size:11px;
+    font-weight:bold;
+    letter-spacing:0.3px;
+    cursor:pointer;
+    user-select:none;
+    transition:transform .15s ease, box-shadow .3s ease, filter .3s ease;
+    border:2px solid var(--locked);
+    background:radial-gradient(circle at 35% 30%, #1a1c2c, #0c0d16 70%);
+    padding:8px;
+  }
+  .node:hover{transform:scale(1.08);}
+  .node .label{pointer-events:none; line-height:1.25;}
+  .node .lock{font-size:20px;opacity:.6;}
+
+  .node.locked{
+    color:#6c7080;
+    border-color:#2a2c38;
+    filter:grayscale(0.6) brightness(0.6);
+  }
+  .node.available{
+    color:var(--cyan);
+    border-color:var(--cyan);
+    box-shadow:0 0 12px 2px rgba(57,232,255,0.35), 0 0 30px rgba(57,232,255,0.15);
+    animation:pulse 1.8s infinite ease-in-out;
+  }
+  .node.unlocked{
+    color:var(--gold);
+    border-color:var(--gold);
+    background:radial-gradient(circle at 35% 30%, #2a2210, #14110a 70%);
+    box-shadow:0 0 16px 4px rgba(255,200,87,0.5), 0 0 40px rgba(255,200,87,0.2);
+  }
+  .node.root{
+    width:120px;height:120px;margin-left:-60px;margin-top:-60px;
+    font-size:13px;
+  }
+  .node.custom{
+    border-style:dashed;
+  }
+  .node.selected{
+    outline:2px solid #fff;
+    outline-offset:3px;
+  }
+
+  @keyframes pulse{
+    0%,100%{ box-shadow:0 0 8px 1px rgba(57,232,255,0.3); }
+    50%{ box-shadow:0 0 22px 6px rgba(57,232,255,0.55); }
+  }
+
+  .link-line{
+    stroke-width:2;
+    fill:none;
+  }
+  .link-locked{ stroke:#23253a; }
+  .link-available{ stroke:var(--cyan); stroke-dasharray:4 4; opacity:0.7; filter:drop-shadow(0 0 4px var(--cyan)); }
+  .link-unlocked{ stroke:var(--gold); opacity:0.9; filter:drop-shadow(0 0 5px var(--gold)); }
+
+  /* HUD */
+  #hud{
+    position:fixed; top:0; left:0; right:0;
+    z-index:5;
+    display:flex; justify-content:space-between; align-items:center;
+    padding:16px 22px;
+    pointer-events:none;
+  }
+  #hud h1{
+    font-size:18px; margin:0; color:#fff; letter-spacing:1px;
+    text-shadow:0 0 12px rgba(57,232,255,0.6);
+    font-family:'Segoe UI',sans-serif;
+  }
+  #hud .subtitle{font-size:11px;color:#7f87ad;margin-top:4px;}
+  #hud-buttons{pointer-events:all; display:flex; gap:10px;}
+
+  .btn{
+    background:linear-gradient(160deg,#15182b,#0b0c16);
+    border:1px solid var(--border);
+    color:#cfd6ff;
+    padding:9px 16px;
+    border-radius:8px;
+    font-family:'Consolas',monospace;
+    font-size:12px;
+    cursor:pointer;
+    transition:all .2s ease;
+    letter-spacing:.5px;
+  }
+  .btn:hover{ border-color:var(--cyan); color:var(--cyan); box-shadow:0 0 10px rgba(57,232,255,0.3);}
+  .btn.primary{ border-color:var(--gold); color:var(--gold);}
+  .btn.primary:hover{ box-shadow:0 0 12px rgba(255,200,87,0.4);}
+  .btn.danger{ border-color:#ff5c7a; color:#ff8fa3;}
+  .btn.danger:hover{ box-shadow:0 0 10px rgba(255,92,122,0.4);}
+  .btn:disabled{opacity:.35; cursor:not-allowed; filter:none; box-shadow:none;}
+
+  /* Sidebar panel */
+  #sidebar{
+    position:fixed; top:0; right:-380px; bottom:0;
+    width:340px;
+    background:var(--panel-bg);
+    border-left:1px solid var(--border);
+    backdrop-filter:blur(6px);
+    z-index:10;
+    transition:right .35s cubic-bezier(.2,.8,.3,1);
+    padding:26px 22px;
+    overflow-y:auto;
+  }
+  #sidebar.open{ right:0; }
+  #sidebar h2{
+    font-family:'Segoe UI',sans-serif;
+    font-size:20px; margin:0 0 6px 0; color:#fff;
+  }
+  #sidebar .status-tag{
+    display:inline-block; padding:3px 10px; border-radius:20px;
+    font-size:10px; letter-spacing:.5px; margin-bottom:14px;
+    border:1px solid currentColor;
+  }
+  .tag-locked{color:#7c8099;}
+  .tag-available{color:var(--cyan);}
+  .tag-unlocked{color:var(--gold);}
+
+  #sidebar .field-label{
+    font-size:10px; text-transform:uppercase; letter-spacing:1px;
+    color:#6f76a0; margin-top:18px; margin-bottom:6px;
+  }
+  #sidebar .lore{ font-size:13px; line-height:1.6; color:#cfd4f5;}
+  #sidebar .prereq{font-size:12.5px; color:#9aa3d6;}
+  #sidebar-actions{margin-top:26px; display:flex; flex-direction:column; gap:10px;}
+  #closeSidebar{
+    position:absolute; top:18px; right:18px;
+    background:none;border:none;color:#7f87ad;font-size:18px;cursor:pointer;
+  }
+  #closeSidebar:hover{color:#fff;}
+
+  /* Modal forge */
+  #modalOverlay{
+    position:fixed; inset:0; background:rgba(0,0,5,0.7);
+    backdrop-filter:blur(3px);
+    z-index:20; display:none;
+    align-items:center; justify-content:center;
+  }
+  #modalOverlay.show{display:flex;}
+  #forgeModal{
+    width:380px;
+    background:linear-gradient(160deg,#0e1020,#070811);
+    border:1px solid var(--violet);
+    box-shadow:0 0 30px rgba(160,107,255,0.3);
+    border-radius:12px;
+    padding:24px;
+  }
+  #forgeModal h3{margin:0 0 14px 0; color:var(--violet); font-family:'Segoe UI',sans-serif;}
+  #forgeModal label{font-size:11px; color:#8b91c2; display:block; margin:12px 0 5px;}
+  #forgeModal select, #forgeModal input, #forgeModal textarea{
+    width:100%; background:#0c0e1a; border:1px solid var(--border); border-radius:6px;
+    color:#e4e8ff; padding:8px 10px; font-family:'Consolas',monospace; font-size:12.5px;
+  }
+  #forgeModal textarea{resize:vertical; min-height:60px;}
+  #forgeModal .modal-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:18px;}
+
+  /* Zoom controls */
+  #zoomControls{
+    position:fixed; bottom:20px; right:20px; z-index:5;
+    display:flex; flex-direction:column; gap:8px;
+  }
+  #zoomControls button{
+    width:36px;height:36px;border-radius:50%;
+    background:#0c0e1a;border:1px solid var(--border);color:#cfd6ff;
+    font-size:16px; cursor:pointer;
+  }
+  #zoomControls button:hover{border-color:var(--cyan); color:var(--cyan);}
+
+  #toast{
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px);
+    background:#0c0e1a; border:1px solid var(--gold); color:var(--gold);
+    padding:10px 20px; border-radius:8px; font-size:12px;
+    opacity:0; pointer-events:none; transition:all .3s ease;
+    z-index:30;
+  }
+  #toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
+
+  ::-webkit-scrollbar{width:6px;}
+  ::-webkit-scrollbar-thumb{background:#2a2e45;border-radius:3px;}
+</style>
+</head>
+<body>
+
+<canvas id="stars"></canvas>
+
+<div id="hud">
+  <div>
+    <h1>✦ CONSTELACIÓN DEL CONOCIMIENTO</h1>
+    <div class="subtitle" id="hud-subtitle">arrastra para explorar, scroll para zoom</div>
+  </div>
+  <div id="hud-buttons">
+    <button class="btn primary" id="btnForge">⚒ Forjar Nodo</button>
+    <button class="btn danger" id="btnReset">↺ Reiniciar Universo</button>
+  </div>
+</div>
+
+<div id="viewport">
+  <div id="world">
+    <svg id="lines"></svg>
+    <div id="nodesLayer"></div>
+  </div>
+</div>
+
+<div id="zoomControls">
+  <button id="zoomIn">+</button>
+  <button id="zoomOut">−</button>
+  <button id="zoomReset">⤾</button>
+</div>
+
+<div id="sidebar">
+  <button id="closeSidebar">✕</button>
+  <h2 id="sb-name">—</h2>
+  <span class="status-tag" id="sb-status">—</span>
+  <div class="field-label">Requisitos previos</div>
+  <div class="prereq" id="sb-prereq">—</div>
+  <div class="field-label">Conocimiento / Lore</div>
+  <div class="lore" id="sb-desc">—</div>
+  <div id="sidebar-actions">
+    <button class="btn primary" id="sb-unlock">Adquirir Habilidad</button>
+  </div>
+</div>
+
+<div id="modalOverlay">
+  <div id="forgeModal">
+    <h3>⚒ Forjar Nueva Ruta</h3>
+    <label>Nodo padre (debe estar adquirido)</label>
+    <select id="forgeParent"></select>
+    <label>Nombre de la habilidad</label>
+    <input id="forgeName" type="text" placeholder="Ej. Teoría de Cuerdas Aplicada" maxlength="40">
+    <label>Descripción / Lore pedagógico</label>
+    <textarea id="forgeDesc" placeholder="Describe qué representa este conocimiento..."></textarea>
+    <div class="modal-actions">
+      <button class="btn" id="forgeCancel">Cancelar</button>
+      <button class="btn primary" id="forgeCreate">Crear Nodo</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<div id="welcomeOverlay" style="position:fixed;inset:0;background:rgba(0,0,5,0.8);backdrop-filter:blur(3px);z-index:30;display:flex;align-items:center;justify-content:center;">
+  <div id="welcomeModal" style="width:380px;background:linear-gradient(160deg,#0e1020,#070811);border:1px solid var(--cyan);box-shadow:0 0 30px rgba(57,232,255,0.3);border-radius:12px;padding:28px;">
+    <h3 style="margin:0 0 8px 0;color:var(--cyan);font-family:'Segoe UI',sans-serif;">✦ Bienvenido al Universo</h3>
+    <p style="font-size:12.5px;color:#9aa3d6;line-height:1.6;margin:0 0 16px 0;">Antes de comenzar tu travesía por la Constelación del Conocimiento, dinos quién eres. Tu progreso quedará grabado en las estrellas de este navegador.</p>
+    <label style="font-size:11px;color:#8b91c2;display:block;margin-bottom:5px;">Tu nombre</label>
+    <input id="welcomeName" type="text" placeholder="Ej. Rafael" maxlength="30" style="width:100%;background:#0c0e1a;border:1px solid var(--border);border-radius:6px;color:#e4e8ff;padding:9px 11px;font-family:'Consolas',monospace;font-size:13px;">
+    <div class="modal-actions" style="margin-top:18px;display:flex;justify-content:flex-end;">
+      <button class="btn primary" id="welcomeStart">Comenzar Travesía ✦</button>
+    </div>
+  </div>
+</div>
+
+<div id="confirmOverlay" style="position:fixed;inset:0;background:rgba(0,0,5,0.7);backdrop-filter:blur(3px);z-index:25;display:none;align-items:center;justify-content:center;">
+  <div style="width:340px;background:linear-gradient(160deg,#1a0e10,#0a0708);border:1px solid #ff5c7a;box-shadow:0 0 30px rgba(255,92,122,0.3);border-radius:12px;padding:24px;">
+    <h3 style="margin:0 0 10px 0;color:#ff8fa3;font-family:'Segoe UI',sans-serif;">⚠ Reiniciar Universo</h3>
+    <p style="font-size:12.5px;color:#cfb9bf;line-height:1.6;margin:0 0 18px 0;">Esto borrará todo tu progreso, nodos forjados y volverás únicamente a Génesis. Esta acción no se puede deshacer.</p>
+    <div class="modal-actions" style="display:flex;justify-content:flex-end;gap:10px;">
+      <button class="btn" id="confirmCancel">Cancelar</button>
+      <button class="btn danger" id="confirmOk">Sí, reiniciar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+
+/* ============== STARFIELD BACKGROUND ============== */
+const starCanvas = document.getElementById('stars');
+const sctx = starCanvas.getContext('2d');
+let stars = [];
+function resizeStars(){
+  starCanvas.width = window.innerWidth;
+  starCanvas.height = window.innerHeight;
+  stars = [];
+  const count = Math.floor((window.innerWidth*window.innerHeight)/3500);
+  for(let i=0;i<count;i++){
+    stars.push({
+      x:Math.random()*starCanvas.width,
+      y:Math.random()*starCanvas.height,
+      r:Math.random()*1.4+0.2,
+      a:Math.random(),
+      speed:Math.random()*0.015+0.003
+    });
+  }
+}
+function drawStars(){
+  sctx.clearRect(0,0,starCanvas.width,starCanvas.height);
+  sctx.fillStyle='#05050a';
+  sctx.fillRect(0,0,starCanvas.width,starCanvas.height);
+  for(const s of stars){
+    s.a += s.speed;
+    const alpha = (Math.sin(s.a)+1)/2*0.8+0.15;
+    sctx.beginPath();
+    sctx.arc(s.x,s.y,s.r,0,Math.PI*2);
+    sctx.fillStyle = `rgba(180,200,255,${alpha})`;
+    sctx.fill();
+  }
+  requestAnimationFrame(drawStars);
+}
+window.addEventListener('resize', resizeStars);
+resizeStars();
+drawStars();
+
+/* ============== DEFAULT SKILL TREE DATA ============== */
+function defaultNodes(){
+  const n = {};
+  const add=(id,name,desc,parent,status)=>{
+    n[id] = {id,name,desc,parent:parent||null,children:[],status:status||'locked',custom:false,x:0,y:0,depth:0};
+    if(parent){ n[parent].children.push(id); }
+  };
+
+  add('root','Génesis','El núcleo de todo conocimiento. El punto donde la curiosidad se convierte en disciplina. Desde aquí parten todas las ramas del saber.', null, 'unlocked');
+
+  // ---- MATEMÁTICAS branch ----
+  add('mat','Matemáticas','La raíz cuantitativa del universo: números, estructuras y patrones que rigen la realidad.', 'root', 'available');
+  add('mat_alg','Álgebra Fundamental','Manipulación simbólica de cantidades desconocidas. La base de toda ecuación.', 'mat');
+  add('mat_geo','Geometría Espacial','Estudio de formas, distancias y proporciones en el espacio.', 'mat');
+  add('mat_arit','Aritmética Avanzada','Operaciones, divisibilidad y teoría elemental de números.', 'mat');
+
+  add('mat_alg_eq','Ecuaciones Lineales','Resolución de incógnitas de primer grado: la herramienta más usada en finanzas y ciencias.', 'mat_alg');
+  add('mat_alg_func','Funciones y Gráficas','Representación visual de relaciones entre variables.', 'mat_alg');
+  add('mat_geo_trig','Trigonometría','Relaciones entre ángulos y lados: la llave de la navegación y la física.', 'mat_geo');
+  add('mat_geo_vec','Vectores y Espacios','Magnitudes con dirección, base de la física moderna y los gráficos 3D.', 'mat_geo');
+
+  // ---- LÓGICA branch ----
+  add('log','Lógica','El arte del razonamiento válido. Estructura del pensamiento crítico y la programación.', 'root', 'available');
+  add('log_prop','Lógica Proposicional','Verdad y falsedad combinadas mediante conectores: y, o, no, si-entonces.', 'log');
+  add('log_set','Teoría de Conjuntos','Agrupación, pertenencia y operaciones entre colecciones de elementos.', 'log');
+  add('log_arg','Argumentación Formal','Construcción de argumentos válidos y detección de falacias.', 'log');
+
+  add('log_prop_tab','Tablas de Verdad','Método sistemático para evaluar la validez de proposiciones compuestas.', 'log_prop');
+  add('log_set_diag','Diagramas de Venn','Representación visual de relaciones entre conjuntos.', 'log_set');
+
+  // ---- ESTRATEGIA branch ----
+  add('est','Estrategia','Planificación, toma de decisiones bajo incertidumbre y optimización de recursos.', 'root', 'available');
+  add('est_teo','Teoría de Juegos','Modelado matemático de la interacción entre agentes racionales.', 'est');
+  add('est_opt','Optimización de Recursos','Maximizar resultados bajo restricciones limitadas: tiempo, dinero, esfuerzo.', 'est');
+  add('est_dec','Toma de Decisiones','Marcos para decidir racionalmente entre alternativas inciertas.', 'est');
+
+  add('est_teo_nash','Equilibrio de Nash','Estado donde ningún jugador mejora cambiando su estrategia unilateralmente.', 'est_teo');
+  add('est_opt_lin','Programación Lineal','Optimización de funciones objetivo sujetas a restricciones lineales.', 'est_opt');
+
+  // ---- CIENCIAS branch ----
+  add('cie','Ciencias','El método empírico para entender el mundo natural mediante observación y experimentación.', 'root', 'available');
+  add('cie_fis','Física Básica','Leyes que gobiernan materia, energía y movimiento.', 'cie');
+  add('cie_est','Estadística','Recolección, análisis e interpretación de datos para la toma de decisiones informadas.', 'cie');
+  add('cie_met','Método Científico','El proceso sistemático de generar y validar conocimiento.', 'cie');
+
+  add('cie_fis_din','Dinámica de Newton','Las tres leyes que explican el movimiento de los cuerpos.', 'cie_fis');
+  add('cie_est_prob','Probabilidad','Medición matemática de la incertidumbre y el azar.', 'cie_est');
+  add('cie_est_desc','Estadística Descriptiva','Resumen de datos mediante medidas de tendencia central y dispersión.', 'cie_est');
+
+  // ---- BASES HUMANAS DE APRENDIZAJE (conectadas directamente a Génesis) ----
+  add('lec','Lectura','La capacidad de decodificar e interpretar símbolos escritos. La puerta de entrada a todo el conocimiento acumulado de la humanidad.', 'root', 'available');
+  add('lec_comp','Comprensión Lectora','Extraer significado, inferencias e ideas centrales de un texto, más allá de la simple decodificación.', 'lec');
+  add('lec_crit','Lectura Crítica','Cuestionar, contrastar y evaluar la validez de lo que se lee.', 'lec');
+
+  add('esc','Escritura','La habilidad de plasmar pensamientos en forma estructurada y comunicable. Pensar con claridad para escribir con claridad.', 'root', 'available');
+  add('esc_red','Redacción Clara','Organización de ideas en oraciones y párrafos coherentes.', 'esc');
+  add('esc_arg','Escritura Argumentativa','Construcción de textos que defienden una postura con evidencia y lógica.', 'esc');
+
+  add('com','Comunicación','El puente entre el pensamiento individual y el entendimiento colectivo. Hablar, escuchar y ser entendido.', 'root', 'available');
+  add('com_esc','Escucha Activa','Prestar atención genuina para comprender, no solo para responder.', 'com');
+  add('com_oral','Expresión Oral','Transmitir ideas de forma clara, ordenada y persuasiva al hablar.', 'com');
+
+  add('pc','Pensamiento Crítico','La capacidad de analizar, cuestionar y evaluar información antes de aceptarla como verdadera.', 'root', 'available');
+  add('pc_ses','Sesgos Cognitivos','Reconocer los atajos mentales que distorsionan nuestro juicio.', 'pc');
+  add('pc_evi','Evaluación de Evidencia','Distinguir entre fuentes confiables y afirmaciones sin sustento.', 'pc');
+
+  add('dis','Disciplina y Hábitos','La constancia que convierte el esfuerzo esporádico en dominio duradero. La base invisible de todo logro.', 'root', 'available');
+  add('dis_foc','Gestión del Enfoque','Sostener la atención en una tarea evitando distracciones.', 'dis');
+  add('dis_const','Constancia','Mantener el esfuerzo a lo largo del tiempo, incluso sin motivación inmediata.', 'dis');
+
+  add('mem','Memoria','La capacidad de retener y recuperar información. El cimiento sobre el cual se construye todo aprendizaje nuevo.', 'root', 'available');
+  add('mem_act','Recuperación Activa','Recordar información practicando en lugar de solo releerla.', 'mem');
+  add('mem_esp','Repetición Espaciada','Revisar contenidos en intervalos crecientes para fijarlos a largo plazo.', 'mem');
+
+  add('cur','Curiosidad','El motor original del aprendizaje: el impulso de preguntar "¿por qué?" y "¿qué pasaría si...?".', 'root', 'available');
+  add('cur_preg','Formulación de Preguntas','Hacer las preguntas correctas es el primer paso hacia cualquier descubrimiento.', 'cur');
+  add('cur_exp','Exploración Autodirigida','Buscar conocimiento por iniciativa propia, sin esperar a que te lo indiquen.', 'cur');
+
+  add('col','Colaboración','El conocimiento se multiplica cuando se comparte. Aprender con y de los demás.', 'root', 'available');
+  add('col_emp','Empatía Cognitiva','Entender la perspectiva de otro para comunicarse y aprender mejor en conjunto.', 'col');
+  add('col_eq','Trabajo en Equipo','Coordinar esfuerzos individuales hacia una meta común.', 'col');
+
+  return n;
+}
+
+const PROCEDURAL_POOL = {
+  default:[
+    ['Síntesis Avanzada','Integración de los conceptos previos en un marco más complejo y aplicado.'],
+    ['Aplicación Práctica','Ejercicios y casos reales donde se pone a prueba el conocimiento adquirido.'],
+    ['Conexión Interdisciplinar','Vínculo de esta habilidad con otras áreas del saber, ampliando su alcance.'],
+    ['Dominio Experto','Nivel de maestría donde el conocimiento se vuelve intuitivo y transferible.']
+  ]
+};
+
+/* ============== STATE ============== */
+const STORAGE_KEY = 'skilltree_universe_v1';
+const NAME_KEY = 'skilltree_username_v1';
+let nodes = {};
+let selectedId = null;
+let pan = {x:0,y:0};
+let zoom = 0.5;
+let username = '';
+
+function loadUsername(){
+  return localStorage.getItem(NAME_KEY) || '';
+}
+function saveUsername(name){
+  username = name;
+  localStorage.setItem(NAME_KEY, name);
+}
+function updateHudName(){
+  const sub = document.getElementById('hud-subtitle');
+  if(username){
+    sub.textContent = `Bienvenido, ${username} · arrastra para explorar, scroll para zoom`;
+  } else {
+    sub.textContent = 'arrastra para explorar, scroll para zoom';
+  }
+}
+
+const welcomeOverlay = document.getElementById('welcomeOverlay');
+function initWelcome(){
+  username = loadUsername();
+  if(username){
+    welcomeOverlay.style.display = 'none';
+    updateHudName();
+  } else {
+    welcomeOverlay.style.display = 'flex';
+    document.getElementById('welcomeName').focus();
+  }
+}
+function commitWelcome(){
+  const val = document.getElementById('welcomeName').value.trim();
+  const finalName = val || 'Explorador';
+  saveUsername(finalName);
+  updateHudName();
+  welcomeOverlay.style.display = 'none';
+  showToast(`✦ Que comience tu travesía, ${finalName}`);
+}
+document.getElementById('welcomeStart').addEventListener('click', commitWelcome);
+document.getElementById('welcomeName').addEventListener('keydown', (e)=>{
+  if(e.key==='Enter') commitWelcome();
+});
+
+function loadState(){
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if(raw){
+    try{
+      const saved = JSON.parse(raw);
+      nodes = saved.nodes;
+      pan = saved.pan || {x:0,y:0};
+      zoom = saved.zoom || 0.5;
+      return;
+    }catch(e){ console.warn('Estado corrupto, regenerando universo.'); }
+  }
+  nodes = defaultNodes();
+}
+function saveState(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({nodes, pan, zoom}));
+}
+
+/* ============== LAYOUT (radial) ============== */
+// Radio (distancia desde el centro) para cada nivel de profundidad.
+// Los valores crecen bastante entre anillos para que los nodos no se encimen
+// cuando hay muchos hijos en un mismo nivel.
+const DEPTH_RADIUS = [0, 300, 580, 860, 1140];
+function radiusForDepth(depth){
+  if(depth < DEPTH_RADIUS.length) return DEPTH_RADIUS[depth];
+  // por si se agregan nodos custom mucho más profundos
+  return DEPTH_RADIUS[DEPTH_RADIUS.length-1] + (depth-(DEPTH_RADIUS.length-1))*260;
+}
+
+function countLeaves(id){
+  const node = nodes[id];
+  const childIds = node.children.filter(cid=>nodes[cid]);
+  if(!childIds.length){ node._leafWeight = 1; return 1; }
+  let sum = 0;
+  childIds.forEach(cid=>{ sum += countLeaves(cid); });
+  node._leafWeight = sum;
+  return sum;
+}
+
+function computeLayout(){
+  const root = nodes['root'];
+  countLeaves('root'); // pondera cada nodo según cuántos descendientes finales tiene
+  root.depth = 0; root.x = 0; root.y = 0;
+  root.angleStart = 0; root.angleEnd = Math.PI*2;
+  layoutChildren('root');
+}
+function layoutChildren(id){
+  const node = nodes[id];
+  const childIds = node.children.filter(cid=>nodes[cid]);
+  if(!childIds.length) return;
+  const span = node.angleEnd - node.angleStart;
+  const totalWeight = childIds.reduce((sum,cid)=> sum + (nodes[cid]._leafWeight||1), 0);
+  let cursor = node.angleStart;
+  childIds.forEach((cid)=>{
+    const c = nodes[cid];
+    c.depth = node.depth + 1;
+    const weight = c._leafWeight || 1;
+    c.angleStart = cursor;
+    c.angleEnd = cursor + span * (weight/totalWeight);
+    cursor = c.angleEnd;
+    const mid = (c.angleStart + c.angleEnd)/2;
+    const radius = radiusForDepth(c.depth);
+    c.x = Math.cos(mid)*radius;
+    c.y = Math.sin(mid)*radius;
+    layoutChildren(cid);
+  });
+}
+
+/* ============== RENDER ============== */
+const linesSvg = document.getElementById('lines');
+const nodesLayer = document.getElementById('nodesLayer');
+const worldEl = document.getElementById('world');
+
+function statusClass(node){
+  return node.status; // 'locked' | 'available' | 'unlocked'
+}
+
+function render(){
+  computeLayout();
+  // lines
+  let svgHTML = '';
+  Object.values(nodes).forEach(node=>{
+    if(!node.parent) return;
+    const p = nodes[node.parent];
+    if(!p) return;
+    let cls = 'link-locked';
+    if(node.status==='unlocked') cls='link-unlocked';
+    else if(node.status==='available') cls='link-available';
+    const x1=p.x+6000, y1=p.y+6000, x2=node.x+6000, y2=node.y+6000;
+    svgHTML += `<line class="link-line ${cls}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+  });
+  linesSvg.setAttribute('viewBox','0 0 12000 12000');
+  linesSvg.innerHTML = svgHTML;
+
+  // nodes
+  let nodesHTML = '';
+  Object.values(nodes).forEach(node=>{
+    const left = node.x+6000, top = node.y+6000;
+    const cls = ['node', statusClass(node)];
+    if(node.id==='root') cls.push('root');
+    if(node.custom) cls.push('custom');
+    if(node.id===selectedId) cls.push('selected');
+    const icon = node.status==='locked' ? '<div class="lock">🔒</div>' : '';
+    nodesHTML += `<div class="${cls.join(' ')}" style="left:${left}px;top:${top}px;" data-id="${node.id}">
+      ${icon}<div class="label">${escapeHtml(node.name)}</div>
+    </div>`;
+  });
+  nodesLayer.innerHTML = nodesHTML;
+
+  nodesLayer.querySelectorAll('.node').forEach(el=>{
+    el.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      selectNode(el.dataset.id);
+    });
+  });
+
+  applyTransform();
+}
+
+function escapeHtml(str){
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+function applyTransform(){
+  worldEl.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
+}
+
+/* ============== SIDEBAR ============== */
+const sidebar = document.getElementById('sidebar');
+function selectNode(id){
+  selectedId = id;
+  const node = nodes[id];
+  document.getElementById('sb-name').textContent = node.name;
+  const statusEl = document.getElementById('sb-status');
+  statusEl.className = 'status-tag tag-'+node.status;
+  statusEl.textContent = node.status==='locked'?'BLOQUEADO':node.status==='available'?'DISPONIBLE':'ADQUIRIDO';
+  document.getElementById('sb-prereq').textContent = node.parent ? nodes[node.parent].name + (nodes[node.parent].status!=='unlocked' ? ' (no adquirido aún)' : '') : 'Ninguno — Nodo raíz';
+  document.getElementById('sb-desc').textContent = node.desc;
+
+  const btn = document.getElementById('sb-unlock');
+  if(node.status==='unlocked'){
+    btn.textContent='Adquirido ✓';
+    btn.disabled = true;
+  } else if(node.status==='available'){
+    btn.textContent='Adquirir Habilidad';
+    btn.disabled = false;
+  } else {
+    btn.textContent='Requiere desbloquear nodo previo';
+    btn.disabled = true;
+  }
+  sidebar.classList.add('open');
+  render();
+}
+document.getElementById('closeSidebar').addEventListener('click', ()=>{
+  sidebar.classList.remove('open');
+  selectedId = null;
+  render();
+});
+
+document.getElementById('sb-unlock').addEventListener('click', ()=>{
+  if(!selectedId) return;
+  unlockNode(selectedId);
+});
+
+function unlockNode(id){
+  const node = nodes[id];
+  if(node.status!=='available') return;
+  node.status = 'unlocked';
+
+  if(node.children.length){
+    node.children.forEach(cid=>{
+      if(nodes[cid] && nodes[cid].status==='locked'){
+        nodes[cid].status = 'available';
+      }
+    });
+  } else {
+    // procedural expansion: generate 2-4 new nodes
+    const count = Math.floor(Math.random()*3)+2; // 2-4
+    const pool = PROCEDURAL_POOL.default;
+    const usedIdx = new Set();
+    for(let i=0;i<count;i++){
+      let idx;
+      do{ idx = Math.floor(Math.random()*pool.length); }while(usedIdx.has(idx) && usedIdx.size<pool.length);
+      usedIdx.add(idx);
+      const [baseName, baseDesc] = pool[idx % pool.length];
+      const newId = node.id + '_p' + Date.now().toString(36) + i;
+      nodes[newId] = {
+        id:newId,
+        name: baseName + ' · ' + node.name,
+        desc: baseDesc,
+        parent: node.id,
+        children: [],
+        status: 'available',
+        custom:false,
+        x:0,y:0,depth:0
+      };
+      node.children.push(newId);
+    }
+  }
+  showToast('✦ Habilidad adquirida: ' + node.name);
+  saveState();
+  selectNode(id);
+}
+
+/* ============== FORGE CUSTOM NODE ============== */
+const modalOverlay = document.getElementById('modalOverlay');
+const forgeParentSelect = document.getElementById('forgeParent');
+
+document.getElementById('btnForge').addEventListener('click', openForge);
+document.getElementById('forgeCancel').addEventListener('click', closeForge);
+modalOverlay.addEventListener('click', (e)=>{ if(e.target===modalOverlay) closeForge(); });
+
+function openForge(){
+  const unlocked = Object.values(nodes).filter(n=>n.status==='unlocked');
+  if(!unlocked.length){
+    showToast('Primero adquiere al menos una habilidad.');
+    return;
+  }
+  forgeParentSelect.innerHTML = unlocked.map(n=>`<option value="${n.id}">${escapeHtml(n.name)}</option>`).join('');
+  if(selectedId && nodes[selectedId] && nodes[selectedId].status==='unlocked'){
+    forgeParentSelect.value = selectedId;
+  }
+  document.getElementById('forgeName').value='';
+  document.getElementById('forgeDesc').value='';
+  modalOverlay.classList.add('show');
+}
+function closeForge(){ modalOverlay.classList.remove('show'); }
+
+document.getElementById('forgeCreate').addEventListener('click', ()=>{
+  const parentId = forgeParentSelect.value;
+  const name = document.getElementById('forgeName').value.trim();
+  const desc = document.getElementById('forgeDesc').value.trim();
+  if(!name){ showToast('Dale un nombre a tu nodo.'); return; }
+  const newId = 'custom_' + Date.now().toString(36);
+  nodes[newId] = {
+    id:newId,
+    name,
+    desc: desc || 'Una ruta de conocimiento forjada por el propio estudiante.',
+    parent: parentId,
+    children: [],
+    status:'unlocked',
+    custom:true,
+    x:0,y:0,depth:0
+  };
+  nodes[parentId].children.push(newId);
+  saveState();
+  render();
+  closeForge();
+  showToast('⚒ Nuevo nodo forjado: ' + name);
+  selectNode(newId);
+});
+
+/* ============== RESET ============== */
+const confirmOverlay = document.getElementById('confirmOverlay');
+document.getElementById('btnReset').addEventListener('click', ()=>{
+  confirmOverlay.style.display = 'flex';
+});
+document.getElementById('confirmCancel').addEventListener('click', ()=>{
+  confirmOverlay.style.display = 'none';
+});
+document.getElementById('confirmOk').addEventListener('click', ()=>{
+  localStorage.removeItem(STORAGE_KEY);
+  confirmOverlay.style.display = 'none';
+  location.reload();
+});
+
+/* ============== TOAST ============== */
+let toastTimer=null;
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.remove('show'), 2600);
+}
+
+/* ============== PAN & ZOOM ============== */
+const viewport = document.getElementById('viewport');
+let dragging = false, dragStart={x:0,y:0}, panStart={x:0,y:0};
+
+viewport.addEventListener('mousedown', (e)=>{
+  dragging = true;
+  viewport.classList.add('dragging');
+  dragStart = {x:e.clientX, y:e.clientY};
+  panStart = {x:pan.x, y:pan.y};
+});
+window.addEventListener('mousemove', (e)=>{
+  if(!dragging) return;
+  pan.x = panStart.x + (e.clientX - dragStart.x);
+  pan.y = panStart.y + (e.clientY - dragStart.y);
+  applyTransform();
+});
+window.addEventListener('mouseup', ()=>{
+  if(dragging) saveState();
+  dragging = false;
+  viewport.classList.remove('dragging');
+});
+
+viewport.addEventListener('click', ()=>{
+  sidebar.classList.remove('open');
+  selectedId = null;
+});
+
+viewport.addEventListener('wheel', (e)=>{
+  e.preventDefault();
+  const delta = e.deltaY > 0 ? -0.08 : 0.08;
+  zoom = Math.min(2.4, Math.max(0.25, zoom + delta));
+  applyTransform();
+  saveState();
+},{passive:false});
+
+document.getElementById('zoomIn').addEventListener('click', ()=>{
+  zoom = Math.min(2.4, zoom + 0.15); applyTransform(); saveState();
+});
+document.getElementById('zoomOut').addEventListener('click', ()=>{
+  zoom = Math.max(0.25, zoom - 0.15); applyTransform(); saveState();
+});
+document.getElementById('zoomReset').addEventListener('click', ()=>{
+  zoom = 0.5; pan = {x:0,y:0}; applyTransform(); saveState();
+});
+
+// touch support for mobile pan
+let lastTouch=null;
+viewport.addEventListener('touchstart', (e)=>{
+  if(e.touches.length===1){
+    lastTouch = {x:e.touches[0].clientX, y:e.touches[0].clientY};
+    panStart = {x:pan.x, y:pan.y};
+  }
+},{passive:true});
+viewport.addEventListener('touchmove', (e)=>{
+  if(e.touches.length===1 && lastTouch){
+    const dx = e.touches[0].clientX - lastTouch.x;
+    const dy = e.touches[0].clientY - lastTouch.y;
+    pan.x = panStart.x + dx;
+    pan.y = panStart.y + dy;
+    applyTransform();
+  }
+},{passive:true});
+viewport.addEventListener('touchend', ()=>{ lastTouch=null; saveState(); });
+
+/* ============== INIT ============== */
+loadState();
+render();
+saveState();
+initWelcome();
+
+})();
+</script>
+</body>
+</html>
